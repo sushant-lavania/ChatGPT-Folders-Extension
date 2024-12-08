@@ -28,3 +28,13 @@
 
 #### **Automatic Chat Name Updates**
 - Chat names automatically update in folders and bookmarks if the title of the chat changes.
+
+#### **Privacy-Focused**
+- All data is stored locally on your machine, ensuring privacy and security 🕶️.
+
+#### **Dark & Light Mode Support**
+- Seamless support for both dark and light themes 🌚🌞.
+
+#### **Import/Export User Data**
+- Import data from a JSON file to restore folders and bookmarks.
+- Export current data to a JSON file for backup or sharing.
