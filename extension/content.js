@@ -1,82 +1,65 @@
 /**
- * @fileoverview Adds "My Folders" functionality with data persistence to the ChatGPT interface.
+ * @fileoverview Adds "My Folders" and "bookmark chats" functionality with data persistence to the ChatGPT interface.
  * Supports both light and dark modes.
- * @version 1.9.0
+ * Pinned items appear at top, earliest pinned at top among pinned.
+ * Folders appear before bookmark chats.
+ * Folder expansion/collapse is maintained on actions.
+ * @version 2.4.0
  */
 (() => {
     'use strict';
 
-    // Constants
-    const LOCAL_STORAGE_KEY = 'myFoldersData';
+    const LOCAL_STORAGE_KEY = 'myFoldersAndBookmarksData_v2';
+    // Track folder expansion states: { [folderName]: boolean }
+    const folderExpansionState = {};
 
-    // Utility Functions
-
-    /**
-     * Save folders data to localStorage.
-     * @param {Array} data - The folders data to save.
-     */
-    const saveFoldersData = (data) => {
+    function saveData(data) {
         try {
             localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
         } catch (error) {
-            console.error('Failed to save folders data:', error);
+            console.error('Failed to save data:', error);
         }
-    };
+    }
 
-    /**
-     * Load folders data from localStorage.
-     * @returns {Array} The loaded folders data.
-     */
-    const loadFoldersData = () => {
+    function loadData() {
         try {
             const data = localStorage.getItem(LOCAL_STORAGE_KEY);
-            return data ? JSON.parse(data) : [];
+            if (data) {
+                return JSON.parse(data);
+            } else {
+                return { foldersData: [], bookmarkChats: [] };
+            }
         } catch (error) {
-            console.error('Failed to load folders data:', error);
-            return [];
+            console.error('Failed to load data:', error);
+            return { foldersData: [], bookmarkChats: [] };
         }
-    };
+    }
 
-    /**
-     * Sanitize a string to prevent XSS attacks.
-     * @param {string} str - The string to sanitize.
-     * @returns {string} The sanitized string.
-     */
-    const sanitizeString = (str) => {
+    function sanitizeString(str) {
         const tempDiv = document.createElement('div');
         tempDiv.textContent = str;
         return tempDiv.innerHTML;
-    };
+    }
 
-    /**
-     * Create an element with optional attributes and event listeners.
-     * @param {string} tag - The tag name of the element.
-     * @param {Object} [options] - The options for the element.
-     * @returns {HTMLElement} The created element.
-     */
-    const createElement = (tag, options = {}) => {
+    function createElement(tag, options = {}) {
         const element = document.createElement(tag);
 
-        // Set attributes
         if (options.attributes) {
             for (const [key, value] of Object.entries(options.attributes)) {
                 element.setAttribute(key, value);
             }
         }
 
-        // Set styles
         if (options.styles) {
             Object.assign(element.style, options.styles);
         }
 
-        // Set properties
         if (options.properties) {
             for (const [key, value] of Object.entries(options.properties)) {
                 element[key] = value;
             }
         }
 
-        // Add event listeners
         if (options.events) {
             for (const [eventType, listener] of Object.entries(options.events)) {
                 element.addEventListener(eventType, listener);
@@ -84,13 +67,9 @@
         }
 
         return element;
-    };
+    }
 
-    /**
-     * Get the current theme ('light' or 'dark').
-     * @returns {string} The current theme.
-     */
-    const getTheme = () => {
+    function getTheme() {
         const bodyStyles = getComputedStyle(document.body);
         const backgroundColor = bodyStyles.backgroundColor;
 
@@ -98,25 +77,19 @@
             const rgb = backgroundColor.match(/\d+/g);
             if (rgb && rgb.length >= 3) {
                 const [r, g, b] = rgb.map(Number);
-                // Calculate luminance
                 const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
                 return luminance < 128 ? 'dark' : 'light';
             }
         }
-        return 'light'; // default to light
-    };
+        return 'light';
+    }
 
-    /**
-     * Initialize the "My Folders" functionality.
-     */
-    const initMyFolders = () => {
-        // Check if "My Folders" header already exists
+    function initMyFolders() {
         if (document.getElementById('my-folders-header')) {
             console.log('"My Folders" already added.');
             return;
         }
 
-        // Find the "Explore GPTs" button
         const exploreGPTs = Array.from(document.querySelectorAll('button')).find(
             (button) => button.textContent.trim() === 'Explore GPTs'
         );
@@ -126,10 +99,8 @@
             return;
         }
 
-        // Determine the current theme
         const theme = getTheme();
 
-        // Set colors based on theme
         const colors = {
             dark: {
                 backgroundColor: '#000',
@@ -157,9 +128,31 @@
 
         const themeColors = colors[theme];
 
-        // Create the "My Folders" header
-        const myFoldersHeader = createElement('button', {
-            attributes: { id: 'my-folders-header' },
+        let data = loadData();
+        let { foldersData, bookmarkChats } = data;
+
+        const now = () => Date.now();
+        function ensureProperties() {
+            foldersData.forEach((folder) => {
+                if (typeof folder.pinned === 'undefined') folder.pinned = false;
+                if (typeof folder.pinnedAt === 'undefined') folder.pinnedAt = null;
+                if (typeof folder.creationIndex === 'undefined') folder.creationIndex = now();
+                folder.chats.forEach((chat) => {
+                    if (typeof chat.pinned === 'undefined') chat.pinned = false;
+                    if (typeof chat.pinnedAt === 'undefined') chat.pinnedAt = null;
+                    if (typeof chat.creationIndex === 'undefined') chat.creationIndex = now();
+                });
+            });
+            bookmarkChats.forEach((chat) => {
+                if (typeof chat.pinned === 'undefined') chat.pinned = false;
+                if (typeof chat.pinnedAt === 'undefined') chat.pinnedAt = null;
+                if (typeof chat.creationIndex === 'undefined') chat.creationIndex = now();
+            });
+        }
+        ensureProperties();
+
+        const mainHeader = createElement('button', {
+            attributes: { id: 'my-folders-header', title: 'My Folder' },
             styles: {
                 display: 'flex',
                 alignItems: 'center',
@@ -174,64 +167,61 @@
                 fontWeight: 'normal',
                 fontFamily: getComputedStyle(exploreGPTs).fontFamily,
                 transition: 'background 0.2s, color 0.2s',
-                borderRadius: '7px', // Added to create rounded corners
+                borderRadius: '7px',
             },
         });
 
-        // Folder icon and text container
         const folderIconContainer = createElement('div', {
             styles: {
                 display: 'flex',
                 alignItems: 'center',
-                borderRadius: '7px', // Added to create rounded corners
+                borderRadius: '7px',
             },
         });
 
-        // Folder icon
         const folderIcon = createElement('span', {
             properties: { textContent: '📁' },
-            styles: { marginRight: '15px', borderRadius: '7px' }, // Added to create rounded corners
+            styles: { marginRight: '15px', borderRadius: '7px' },
         });
 
-        // "My Folders" text
         const folderText = createElement('span', {
             properties: { textContent: 'My Folders' },
             styles: {
                 fontWeight: 'normal',
                 fontFamily: getComputedStyle(exploreGPTs).fontFamily,
                 fontSize: getComputedStyle(exploreGPTs).fontSize,
-                borderRadius: '7px', // Added to create rounded corners
+                borderRadius: '7px',
             },
         });
 
         folderIconContainer.appendChild(folderIcon);
         folderIconContainer.appendChild(folderText);
 
-        // "+" button to create folders (initially hidden)
         const createFolderButton = createElement('button', {
-            properties: { textContent: '+' },
+            properties: { textContent: '#' },
+            attributes: { title: 'create folders' },
             styles: {
                 background: 'transparent',
                 border: 'none',
                 color: 'inherit',
                 cursor: 'pointer',
-                fontSize: '20px',
+                fontSize: '16px',
                 fontWeight: 'bold',
-                borderRadius: '7px', // Added to create rounded corners
-                opacity: '0', // Ensure the button is initially hidden
+                borderRadius: '7px',
+                opacity: '0',
                 transition: 'opacity 0.2s, color 0.2s, font-size 0.2s',
-                marginLeft: '10px', // Added space between buttons
+                marginLeft: '10px',
                 display: 'flex',
                 alignItems: 'center',
             },
             events: {
                 mouseover: () => {
-                    createFolderButton.style.color = '#00aaff'; // Blue color
-                    createFolderButton.style.fontSize = '21px'; // Slightly increase size on hover
+                    createFolderButton.style.color = '#00aaff';
+                    createFolderButton.style.fontSize = '20px';
                 },
                 mouseout: () => {
                     createFolderButton.style.color = 'inherit';
-                    createFolderButton.style.fontSize = '20px'; // Reset size
+                    createFolderButton.style.fontSize = '16px';
                 },
                 click: (event) => {
                     event.stopPropagation();
@@ -239,19 +229,22 @@
                     if (folderName) {
                         const sanitizedFolderName = sanitizeString(folderName.trim());
                         if (sanitizedFolderName) {
-                            // Check for duplicate folder name
                             if (foldersData.some((folder) => folder.name === sanitizedFolderName)) {
                                 alert(`A folder named "${sanitizedFolderName}" already exists.`);
                                 return;
                             }
-
-                            foldersData.push({ name: sanitizedFolderName, chats: [], pinned: false });
-                            saveFoldersData(foldersData);
-                            foldersContainer.style.display = 'block';
-                            // Update folder icon to expanded
+                            foldersData.push({
+                                name: sanitizedFolderName,
+                                chats: [],
+                                pinned: false,
+                                pinnedAt: null,
+                                creationIndex: now(),
+                            });
+                            saveData({ foldersData, bookmarkChats });
+                            itemsContainer.style.display = 'block';
                             folderIcon.textContent = '📂';
-                            // Re-render folders
-                            renderFolders();
+                            folderExpansionState[sanitizedFolderName] = true;
+                            renderItems();
                         } else {
                             alert('Invalid folder name.');
                         }
@@ -260,9 +253,9 @@
             },
         });
 
-        // Options button (ellipsis), initially hidden
-        const optionsButton = createElement('button', {
-            properties: { textContent: '…' },
+        const addBookmarkChatButton = createElement('button', {
+            properties: { textContent: '+' },
+            attributes: { title: 'add curr chat as bookmark' },
             styles: {
                 background: 'transparent',
                 border: 'none',
@@ -271,31 +264,80 @@
                 fontSize: '20px',
                 fontWeight: 'bold',
                 borderRadius: '7px',
-                opacity: '0', // Ensure the button is initially hidden
+                opacity: '0',
                 transition: 'opacity 0.2s, color 0.2s, font-size 0.2s',
-                marginLeft: '10px', // Added space between buttons
-                marginTop: '2px', // Adjusted to align with "+"
-                marginBottom: '8px', // Adjusted to align with "+"
+                marginLeft: '10px',
                 display: 'flex',
                 alignItems: 'center',
             },
             events: {
                 mouseover: () => {
-                    optionsButton.style.color = '#00aaff'; // Blue color
-                    optionsButton.style.fontSize = '21px'; // Slightly increase size on hover
+                    addBookmarkChatButton.style.color = '#00aaff';
+                    addBookmarkChatButton.style.fontSize = '22px';
                 },
                 mouseout: () => {
-                    optionsButton.style.color = 'inherit';
-                    optionsButton.style.fontSize = '20px'; // Reset size
+                    addBookmarkChatButton.style.color = 'inherit';
+                    addBookmarkChatButton.style.fontSize = '20px';
                 },
                 click: (event) => {
                     event.stopPropagation();
-                    // Toggle options menu
+                    const chatName = document.title || 'Unnamed Chat';
+                    const chatHref = window.location.href;
+                    const sanitizedChatName = sanitizeString(chatName.trim());
+                    if (bookmarkChats.some((c) => c.name === sanitizedChatName && c.href === chatHref)) {
+                        alert(`Chat "${sanitizedChatName}" already bookmarked.`);
+                        return;
+                    }
+
+                    bookmarkChats.push({
+                        name: sanitizedChatName,
+                        href: chatHref,
+                        pinned: false,
+                        pinnedAt: null,
+                        creationIndex: now(),
+                    });
+                    saveData({ foldersData, bookmarkChats });
+                    itemsContainer.style.display = 'block';
+                    folderIcon.textContent = '📂';
+                    renderItems();
+                },
+            },
+        });
+
+        const optionsButton = createElement('button', {
+            properties: { textContent: '…' },
+            attributes: { title: 'options' },
+            styles: {
+                background: 'transparent',
+                border: 'none',
+                color: 'inherit',
+                cursor: 'pointer',
+                fontSize: '20px',
+                fontWeight: 'bold',
+                borderRadius: '7px',
+                opacity: '0',
+                transition: 'opacity 0.2s, color 0.2s, font-size 0.2s',
+                marginLeft: '10px',
+                marginTop: '2px',
+                marginBottom: '8px',
+                display: 'flex',
+                alignItems: 'center',
+            },
+            events: {
+                mouseover: () => {
+                    optionsButton.style.color = '#00aaff';
+                    optionsButton.style.fontSize = '20px';
+                },
+                mouseout: () => {
+                    optionsButton.style.color = 'inherit';
+                    optionsButton.style.fontSize = '20px';
+                },
+                click: (event) => {
+                    event.stopPropagation();
                     if (optionsMenu.style.display === 'block') {
                         optionsMenu.style.display = 'none';
                     } else {
                         optionsMenu.style.display = 'block';
-                        // Position optionsMenu relative to optionsButton
                         const rect = optionsButton.getBoundingClientRect();
                         optionsMenu.style.top = `${rect.bottom + window.scrollY}px`;
                         optionsMenu.style.left = `${rect.left + window.scrollX - optionsMenu.offsetWidth + optionsButton.offsetWidth}px`;
@@ -304,7 +346,6 @@
             },
         });
 
-        // Options menu
         const optionsMenu = createElement('div', {
             styles: {
                 display: 'none',
@@ -318,8 +359,7 @@
             },
         });
 
-        // Helper function to create menu items
-        const createMenuItem = (text, onClick) => {
+        function createMenuItem(text, onClick) {
             const item = createElement('div', {
                 properties: { textContent: text },
                 styles: {
@@ -343,9 +383,8 @@
                 },
             });
             return item;
-        };
+        }
 
-        // Import user data
         const importItem = createMenuItem('📥 Import User Data', () => {
             const fileInput = createElement('input', {
                 attributes: { type: 'file', accept: '.json' },
@@ -358,10 +397,17 @@
                 reader.onload = (e) => {
                     try {
                         const importedData = JSON.parse(e.target.result);
-                        if (Array.isArray(importedData)) {
-                            foldersData = importedData;
-                            saveFoldersData(foldersData);
-                            renderFolders();
+                        if (
+                            importedData &&
+                            Array.isArray(importedData.foldersData) &&
+                            Array.isArray(importedData.bookmarkChats)
+                        ) {
+                            data = importedData;
+                            foldersData = data.foldersData;
+                            bookmarkChats = data.bookmarkChats;
+                            ensureProperties();
+                            saveData(data);
+                            renderItems();
                             alert('Data imported successfully!');
                         } else {
                             alert('Invalid data format.');
@@ -371,16 +417,17 @@
                         console.error('Import error:', error);
                     }
                 };
-                reader.readAsText(file);
+                document.body.appendChild(fileInput);
+                fileInput.click();
+                document.body.removeChild(fileInput);
             });
             document.body.appendChild(fileInput);
             fileInput.click();
             document.body.removeChild(fileInput);
         });
 
-        // Export user data
         const exportItem = createMenuItem('📤 Export User Data', () => {
-            const dataStr = JSON.stringify(foldersData, null, 2);
+            const dataStr = JSON.stringify({ foldersData, bookmarkChats }, null, 2);
             const dataBlob = new Blob([dataStr], { type: 'application/json' });
             const url = URL.createObjectURL(dataBlob);
             const link = createElement('a', {
@@ -392,12 +439,10 @@
             URL.revokeObjectURL(url);
         });
 
-        // LinkedIn link (placeholder)
         const linkedInItem = createMenuItem('👤 LinkedIn', () => {
             window.open('https://www.linkedin.com/in/sushant-lavania-47288322a/', '_blank');
         });
 
-        // GitHub Repo link (placeholder)
         const githubItem = createMenuItem('🛠️ GitHub Repo', () => {
             window.open('https://github.com/sushant-lavania/ChatGPT-Folders-Extension', '_blank');
         });
@@ -406,11 +451,8 @@
         optionsMenu.appendChild(exportItem);
         optionsMenu.appendChild(linkedInItem);
         optionsMenu.appendChild(githubItem);
-
-        // Append optionsMenu to body
         document.body.appendChild(optionsMenu);
 
-        // Close optionsMenu when clicking outside
         document.addEventListener('click', (event) => {
             if (
                 event.target !== optionsMenu &&
@@ -421,7 +463,6 @@
             }
         });
 
-        // Buttons container
         const buttonsContainer = createElement('div', {
             styles: {
                 display: 'flex',
@@ -430,120 +471,84 @@
         });
 
         buttonsContainer.appendChild(createFolderButton);
+        buttonsContainer.appendChild(addBookmarkChatButton);
         buttonsContainer.appendChild(optionsButton);
 
-        myFoldersHeader.appendChild(folderIconContainer);
-        myFoldersHeader.appendChild(buttonsContainer);
+        mainHeader.appendChild(folderIconContainer);
+        mainHeader.appendChild(buttonsContainer);
 
-        // Container for folders
-        const foldersContainer = createElement('div', {
-            styles: { display: 'none', borderRadius: '7px' }, // Added to create rounded corners
+        const itemsContainer = createElement('div', {
+            styles: { display: 'none', borderRadius: '7px' },
         });
 
-        // Toggle foldersContainer visibility when header is clicked
-        myFoldersHeader.addEventListener('click', (event) => {
-            if (event.target !== createFolderButton && event.target !== optionsButton) {
-                foldersContainer.style.display =
-                    foldersContainer.style.display === 'none' ? 'block' : 'none';
-                // Update folder icon based on foldersContainer display
+        mainHeader.addEventListener('click', (event) => {
+            if (event.target !== createFolderButton && event.target !== addBookmarkChatButton && event.target !== optionsButton) {
+                itemsContainer.style.display =
+                    itemsContainer.style.display === 'none' ? 'block' : 'none';
                 folderIcon.textContent =
-                    foldersContainer.style.display === 'none' ? '📁' : '📂';
+                    itemsContainer.style.display === 'none' ? '📁' : '📂';
             }
         });
 
-        // Hover effect for the entire "My Folders" header
-        myFoldersHeader.addEventListener('mouseover', () => {
-            // Show the "+" and "…" buttons
+        mainHeader.addEventListener('mouseover', () => {
             createFolderButton.style.opacity = '1';
+            addBookmarkChatButton.style.opacity = '1';
             optionsButton.style.opacity = '1';
-            // Apply hover effect to the entire header
-            myFoldersHeader.style.background = themeColors.hoverBackgroundColor;
-            myFoldersHeader.style.color = themeColors.hoverTextColor;
+            mainHeader.style.background = themeColors.hoverBackgroundColor;
+            mainHeader.style.color = themeColors.hoverTextColor;
         });
 
-        myFoldersHeader.addEventListener('mouseout', () => {
-            // Hide the "+" and "…" buttons
+        mainHeader.addEventListener('mouseout', () => {
             createFolderButton.style.opacity = '0';
+            addBookmarkChatButton.style.opacity = '0';
             optionsButton.style.opacity = '0';
-            // Remove hover effect from the header
-            myFoldersHeader.style.background = 'transparent';
-            myFoldersHeader.style.color = 'inherit';
+            mainHeader.style.background = 'transparent';
+            mainHeader.style.color = 'inherit';
         });
 
-        // Load folders from localStorage
-        let foldersData = loadFoldersData();
-
-        // Ensure all folders and chats have 'pinned' property
-        foldersData.forEach((folder) => {
-            if (typeof folder.pinned === 'undefined') {
-                folder.pinned = false;
+        function togglePin(item) {
+            if (!item.pinned) {
+                item.pinned = true;
+                item.pinnedAt = Date.now();
+            } else {
+                item.pinned = false;
+                item.pinnedAt = null;
             }
-            folder.chats.forEach((chat) => {
-                if (typeof chat.pinned === 'undefined') {
-                    chat.pinned = false;
-                }
-            });
-        });
+        }
 
-        /**
-         * Render all folders.
-         */
-        const renderFolders = () => {
-            // Clear existing folders
-            foldersContainer.innerHTML = '';
+        function sortItems(a, b) {
+            // pinned first
+            if (a.pinned !== b.pinned) {
+                return a.pinned ? -1 : 1; // pinned at top
+            }
+            // both pinned => by pinnedAt ascending
+            if (a.pinned && b.pinned) {
+                return (a.pinnedAt || 0) - (b.pinnedAt || 0);
+            }
+            // both unpinned => by creationIndex ascending
+            return (a.creationIndex || 0) - (b.creationIndex || 0);
+        }
 
-            // Sort folders: pinned folders first
-            const sortedFolders = foldersData.slice().sort((a, b) => {
-                if (a.pinned === b.pinned) {
-                    return 0;
-                } else if (a.pinned) {
-                    return -1;
-                } else {
-                    return 1;
-                }
-            });
-
-            // Render each folder
-            sortedFolders.forEach((folder) => {
-                createFolder(folder.name, folder.chats, folder.pinned);
-            });
-        };
-
-        /**
-         * Render the chats in a folder.
-         * @param {HTMLElement} folderContent - The folder content container.
-         * @param {Array} folderChats - The array of chats in the folder.
-         * @param {string} currentFolderName - The name of the current folder.
-         */
-        const renderChatsInFolder = (folderContent, folderChats, currentFolderName) => {
-            // Clear existing content
+        function renderChatsInFolder(folderContent, folderChats, currentFolderName) {
             folderContent.innerHTML = '';
+            const sortedChats = folderChats.slice().sort(sortItems);
 
-            // Sort chats: pinned chats first
-            const sortedChats = folderChats.slice().sort((a, b) => {
-                if (a.pinned === b.pinned) {
-                    return 0;
-                } else if (a.pinned) {
-                    return -1;
-                } else {
-                    return 1;
-                }
-            });
+            if (sortedChats.length === 0) {
+                // show (empty) if no chats
+                const emptyMsg = document.createElement('div');
+                emptyMsg.textContent = '(empty)';
+                emptyMsg.style.fontStyle = 'italic';
+                emptyMsg.style.opacity = '0.7';
+                folderContent.appendChild(emptyMsg);
+            } else {
+                sortedChats.forEach((chat) => {
+                    const chatItem = createChatItem(chat, currentFolderName, false);
+                    folderContent.appendChild(chatItem);
+                });
+            }
+        }
 
-            // Render each chat
-            sortedChats.forEach((chat) => {
-                const chatItem = createChatItem(chat, currentFolderName);
-                folderContent.appendChild(chatItem);
-            });
-        };
-
-        /**
-         * Create a chat item element.
-         * @param {Object} chat - The chat object.
-         * @param {string} currentFolderName - The name of the current folder.
-         * @returns {HTMLElement} The chat item element.
-         */
-        const createChatItem = (chat, currentFolderName) => {
+        function createChatItem(chat, currentFolderName, isBookmarkChat = false) {
             const chatName = chat.name;
             const chatHref = chat.href;
 
@@ -554,7 +559,7 @@
                     marginBottom: '5px',
                     padding: '10px',
                     border: `1px solid ${themeColors.folderItemBorderColor}`,
-                    borderRadius: '7px', // Added to create rounded corners
+                    borderRadius: '7px',
                     background: themeColors.folderItemBackground,
                     color: themeColors.textColor,
                 },
@@ -564,19 +569,18 @@
                 properties: {
                     href: chatHref,
                     textContent: chatName,
-                    // Open in current tab
                 },
                 styles: {
                     color: 'inherit',
                     textDecoration: 'none',
                     flexGrow: '1',
-                    borderRadius: '7px', // Added to create rounded corners
+                    borderRadius: '7px',
                 },
             });
 
             const renameButton = createElement('button', {
                 properties: { textContent: '🖋' },
-                attributes: { title: 'Rename' },
+                attributes: { title: 'rename chat' },
                 styles: {
                     marginLeft: '10px',
                     background: 'none',
@@ -588,34 +592,43 @@
                 },
                 events: {
                     mouseover: () => {
-                        renameButton.style.color = '#00aaff'; // Blue color on hover
-                        renameButton.style.fontSize = '17px'; // Slightly increase size on hover
+                        renameButton.style.color = '#00aaff';
+                        renameButton.style.fontSize = '17px';
                     },
                     mouseout: () => {
-                        renameButton.style.color = themeColors.textColor; // Reset color
-                        renameButton.style.fontSize = '16px'; // Reset size
+                        renameButton.style.color = themeColors.textColor;
+                        renameButton.style.fontSize = '16px';
                     },
-                    click: () => {
+                    click: (event) => {
+                        event.stopPropagation();
                         const newName = prompt('Enter new chat name:', chatName);
                         if (newName) {
                             const sanitizedNewName = sanitizeString(newName.trim());
                             if (sanitizedNewName) {
-                                const folderIndex = foldersData.findIndex(
-                                    (folder) => folder.name === currentFolderName
-                                );
-                                if (folderIndex !== -1) {
-                                    const chatIndex = foldersData[folderIndex].chats.findIndex(
+                                if (isBookmarkChat) {
+                                    const chatIndex = bookmarkChats.findIndex(
                                         (c) => c.name === chatName && c.href === chatHref
                                     );
                                     if (chatIndex !== -1) {
-                                        foldersData[folderIndex].chats[chatIndex].name = sanitizedNewName;
-                                        saveFoldersData(foldersData);
-                                        // Re-render the chats
-                                        renderChatsInFolder(
-                                            chatItem.parentElement,
-                                            foldersData[folderIndex].chats,
-                                            currentFolderName
+                                        bookmarkChats[chatIndex].name = sanitizedNewName;
+                                        saveData({ foldersData, bookmarkChats });
+                                        renderItems();
+                                    }
+                                } else {
+                                    const folderIndex = foldersData.findIndex(
+                                        (folder) => folder.name === currentFolderName
+                                    );
+                                    if (folderIndex !== -1) {
+                                        const chatIndex = foldersData[folderIndex].chats.findIndex(
+                                            (c) => c.name === chatName && c.href === chatHref
                                         );
+                                        if (chatIndex !== -1) {
+                                            foldersData[folderIndex].chats[chatIndex].name = sanitizedNewName;
+                                            saveData({ foldersData, bookmarkChats });
+                                            // Keep folder expanded
+                                            folderExpansionState[currentFolderName] = true;
+                                            renderItems();
+                                        }
                                     }
                                 }
                             } else {
@@ -628,7 +641,7 @@
 
             const pinChatButton = createElement('button', {
                 properties: { textContent: chat.pinned ? '◉' : '◎' },
-                attributes: { title: chat.pinned ? 'Pinned' : 'UnPinned' },
+                attributes: { title: chat.pinned ? 'Pinned' : 'UnPinned Chat' },
                 styles: {
                     marginLeft: '10px',
                     background: 'none',
@@ -640,31 +653,39 @@
                 },
                 events: {
                     mouseover: () => {
-                        pinChatButton.style.fontSize = '17px'; // Slightly increase size on hover
-                        pinChatButton.style.color = '#00aaff'; // Blue color on hover
+                        pinChatButton.style.fontSize = '17px';
+                        pinChatButton.style.color = '#00aaff';
                     },
                     mouseout: () => {
-                        pinChatButton.style.fontSize = '16px'; // Reset size
-                        pinChatButton.style.color = themeColors.textColor; // Reset color
+                        pinChatButton.style.fontSize = '16px';
+                        pinChatButton.style.color = themeColors.textColor;
                     },
-                    click: () => {
-                        const folderIndex = foldersData.findIndex(
-                            (folder) => folder.name === currentFolderName
-                        );
-                        if (folderIndex !== -1) {
-                            const chatIndex = foldersData[folderIndex].chats.findIndex(
+                    click: (event) => {
+                        event.stopPropagation();
+                        if (isBookmarkChat) {
+                            const chatIndex = bookmarkChats.findIndex(
                                 (c) => c.name === chatName && c.href === chatHref
                             );
                             if (chatIndex !== -1) {
-                                const isPinned = foldersData[folderIndex].chats[chatIndex].pinned;
-                                foldersData[folderIndex].chats[chatIndex].pinned = !isPinned;
-                                saveFoldersData(foldersData);
-                                // Re-render the chats
-                                renderChatsInFolder(
-                                    chatItem.parentElement,
-                                    foldersData[folderIndex].chats,
-                                    currentFolderName
+                                togglePin(bookmarkChats[chatIndex]);
+                                saveData({ foldersData, bookmarkChats });
+                                renderItems();
+                            }
+                        } else {
+                            const folderIndex = foldersData.findIndex(
+                                (folder) => folder.name === currentFolderName
+                            );
+                            if (folderIndex !== -1) {
+                                const chatIndex = foldersData[folderIndex].chats.findIndex(
+                                    (c) => c.name === chatName && c.href === chatHref
                                 );
+                                if (chatIndex !== -1) {
+                                    togglePin(foldersData[folderIndex].chats[chatIndex]);
+                                    saveData({ foldersData, bookmarkChats });
+                                    // Keep folder expanded
+                                    folderExpansionState[currentFolderName] = true;
+                                    renderItems();
+                                }
                             }
                         }
                     },
@@ -673,6 +694,7 @@
 
             const deleteChatButton = createElement('button', {
                 properties: { textContent: '×' },
+                attributes: { title: 'delete chat' },
                 styles: {
                     marginLeft: '10px',
                     background: 'none',
@@ -681,89 +703,85 @@
                     fontSize: '16px',
                     cursor: 'pointer',
                     transition: 'color 0.2s, font-size 0.2s',
-                    borderRadius: '7px', // Added to create rounded corners
+                    borderRadius: '7px',
                 },
                 events: {
                     mouseover: () => {
                         deleteChatButton.style.color = themeColors.deleteButtonHoverColor;
-                        deleteChatButton.style.fontSize = '17px'; // Slightly increase size on hover
+                        deleteChatButton.style.fontSize = '17px';
                     },
                     mouseout: () => {
                         deleteChatButton.style.color = themeColors.textColor;
-                        deleteChatButton.style.fontSize = '16px'; // Reset size
+                        deleteChatButton.style.fontSize = '16px';
                     },
-                    click: () => {
-                        const folderIndex = foldersData.findIndex(
-                            (folder) => folder.name === currentFolderName
-                        );
-                        if (folderIndex !== -1) {
-                            foldersData[folderIndex].chats = foldersData[folderIndex].chats.filter(
+                    click: (event) => {
+                        event.stopPropagation();
+                        if (isBookmarkChat) {
+                            bookmarkChats = bookmarkChats.filter(
                                 (c) => c.name !== chatName || c.href !== chatHref
                             );
-                            saveFoldersData(foldersData);
-                            // Re-render the chats
-                            renderChatsInFolder(
-                                chatItem.parentElement,
-                                foldersData[folderIndex].chats,
-                                currentFolderName
+                            saveData({ foldersData, bookmarkChats });
+                            renderItems();
+                        } else {
+                            const folderIndex = foldersData.findIndex(
+                                (folder) => folder.name === currentFolderName
                             );
+                            if (folderIndex !== -1) {
+                                foldersData[folderIndex].chats = foldersData[folderIndex].chats.filter(
+                                    (c) => c.name !== chatName || c.href !== chatHref
+                                );
+                                saveData({ foldersData, bookmarkChats });
+                                // Keep folder expanded
+                                folderExpansionState[currentFolderName] = true;
+                                renderItems();
+                            }
                         }
                     },
                 },
             });
 
-            // Append elements in the order: chatLink, renameButton, pinChatButton, deleteChatButton
             chatItem.appendChild(chatLink);
             chatItem.appendChild(renameButton);
             chatItem.appendChild(pinChatButton);
             chatItem.appendChild(deleteChatButton);
 
             return chatItem;
-        };
+        }
 
-        /**
-         * Create a new folder element.
-         * @param {string} folderName - The name of the folder.
-         * @param {Array} folderChats - The list of chats in the folder.
-         * @param {boolean} pinned - Whether the folder is pinned.
-         */
-        const createFolder = (folderName, folderChats = [], pinned = false) => {
+        function createFolder(folderName, folderChats = [], pinned = false) {
             let currentFolderName = folderName;
 
-            // Create the folder container
             const folderContainer = createElement('div', {
-                styles: { marginBottom: '5px', borderRadius: '7px' }, // Added to create rounded corners
+                styles: { marginBottom: '5px', borderRadius: '7px' },
             });
 
-            // Create header container
             const headerContainer = createElement('div', {
                 styles: {
                     display: 'flex',
                     alignItems: 'center',
                     border: `1px solid ${themeColors.borderColor}`,
-                    borderRadius: '7px', // Added to create rounded corners
+                    borderRadius: '7px',
                 },
             });
 
-            // Folder icon (changing icon for expanded/contracted)
             const folderIconSpan = createElement('span', {
-                properties: { textContent: '📁' }, // Default to contracted folder icon
+                properties: { textContent: '📁' },
                 styles: {
                     marginRight: '10px',
                     fontSize: '16px',
                 },
             });
 
-            // Folder name text
             const folderNameSpan = createElement('span', {
-                properties: { textContent: currentFolderName },
+                properties: { textContent: folderName },
+                attributes: { title: 'click twice to rename' },
                 styles: {
                     flexGrow: '1',
                 },
             });
 
-            // Folder button (container for icon and name)
             const folderButton = createElement('button', {
+                attributes: { title: 'My Folder' },
                 styles: {
                     display: 'flex',
                     alignItems: 'center',
@@ -772,7 +790,7 @@
                     background: themeColors.backgroundColor,
                     color: themeColors.textColor,
                     border: 'none',
-                    borderRadius: '7px 0 0 7px', // Added to create rounded corners
+                    borderRadius: '7px 0 0 7px',
                     cursor: 'pointer',
                     textAlign: 'left',
                     fontWeight: 'bold',
@@ -788,12 +806,11 @@
                         folderButton.style.background = themeColors.backgroundColor;
                         folderButton.style.color = themeColors.textColor;
                     },
-                    click: () => {
-                        folderContent.style.display =
-                            folderContent.style.display === 'none' ? 'block' : 'none';
-                        // Update folder icon based on folderContent display
-                        folderIconSpan.textContent =
-                            folderContent.style.display === 'none' ? '📁' : '📂';
+                    click: (event) => {
+                        // toggle folder expansion
+                        event.stopPropagation();
+                        folderExpansionState[currentFolderName] = !folderExpansionState[currentFolderName];
+                        renderItems();
                     },
                     dblclick: (event) => {
                         event.stopPropagation();
@@ -801,21 +818,24 @@
                         if (newName) {
                             const sanitizedNewName = sanitizeString(newName.trim());
                             if (sanitizedNewName) {
-                                // Check for duplicate folder name
                                 if (foldersData.some((folder) => folder.name === sanitizedNewName)) {
                                     alert(`A folder named "${sanitizedNewName}" already exists.`);
                                     return;
                                 }
 
-                                folderNameSpan.textContent = sanitizedNewName;
                                 const folderIndex = foldersData.findIndex(
                                     (folder) => folder.name === currentFolderName
                                 );
                                 if (folderIndex !== -1) {
                                     foldersData[folderIndex].name = sanitizedNewName;
-                                    saveFoldersData(foldersData);
+                                    saveData({ foldersData, bookmarkChats });
+
+                                    const wasExpanded = folderExpansionState[currentFolderName] || false;
+                                    delete folderExpansionState[currentFolderName];
+                                    currentFolderName = sanitizedNewName;
+                                    folderExpansionState[currentFolderName] = wasExpanded;
+                                    renderItems();
                                 }
-                                currentFolderName = sanitizedNewName;
                             } else {
                                 alert('Invalid folder name.');
                             }
@@ -824,20 +844,17 @@
                 },
             });
 
-            // Append icon and name to folderButton
             folderButton.appendChild(folderIconSpan);
             folderButton.appendChild(folderNameSpan);
 
-            // "+" button to add chats
             const addChatButton = createElement('button', {
                 properties: { textContent: '+' },
+                attributes: { title: 'add curr chat' },
                 styles: {
                     padding: '10px',
                     background: themeColors.backgroundColor,
                     color: themeColors.textColor,
                     border: 'none',
-                    borderLeft: `1px solid ${themeColors.borderColor}`,
-                    borderRadius: '0',
                     cursor: 'pointer',
                     fontSize: '16px',
                     fontWeight: 'bold',
@@ -845,68 +862,45 @@
                 },
                 events: {
                     mouseover: () => {
-                        addChatButton.style.color = '#00aaff'; // Blue color
-                        addChatButton.style.fontSize = '17px'; // Slightly increase size on hover
+                        addChatButton.style.color = '#00aaff';
+                        addChatButton.style.fontSize = '17px';
                     },
                     mouseout: () => {
                         addChatButton.style.color = themeColors.textColor;
-                        addChatButton.style.fontSize = '16px'; // Reset size
+                        addChatButton.style.fontSize = '16px';
                     },
-                    click: () => {
+                    click: (event) => {
+                        event.stopPropagation();
                         const chatName = document.title || 'Unnamed Chat';
                         const chatHref = window.location.href;
-
-                        // Sanitize chat name
                         const sanitizedChatName = sanitizeString(chatName.trim());
-                        const sanitizedChatHref = chatHref;
 
-                        // Check for duplicates
-                        if (
-                            folderChats.some(
-                                (chat) =>
-                                    chat.name === sanitizedChatName && chat.href === sanitizedChatHref
-                            )
-                        ) {
-                            alert(`Chat "${sanitizedChatName}" is already in the folder.`);
-                            return;
-                        }
-
-                        // Add chat to folder
-                        folderChats.push({
-                            name: sanitizedChatName,
-                            href: sanitizedChatHref,
-                            pinned: false, // Default to not pinned
-                        });
-
-                        // Update foldersData
                         const folderIndex = foldersData.findIndex(
                             (folder) => folder.name === currentFolderName
                         );
                         if (folderIndex !== -1) {
-                            foldersData[folderIndex].chats = folderChats;
-                            saveFoldersData(foldersData);
-                        } else {
-                            foldersData.push({
-                                name: currentFolderName,
-                                chats: folderChats,
+                            const folder = foldersData[folderIndex];
+                            if (folder.chats.some((c) => c.name === sanitizedChatName && c.href === chatHref)) {
+                                alert(`Chat "${sanitizedChatName}" is already in the folder.`);
+                                return;
+                            }
+
+                            folder.chats.push({
+                                name: sanitizedChatName,
+                                href: chatHref,
                                 pinned: false,
+                                pinnedAt: null,
+                                creationIndex: Date.now(),
                             });
-                            saveFoldersData(foldersData);
+                            saveData({ foldersData, bookmarkChats });
+                            // Keep folder expanded
+                            folderExpansionState[currentFolderName] = true;
+                            renderItems();
                         }
-
-                        // Show folder content
-                        folderContent.style.display = 'block';
-
-                        // Update folder icon to expanded
-                        folderIconSpan.textContent = '📂';
-
-                        // Re-render the chats
-                        renderChatsInFolder(folderContent, folderChats, currentFolderName);
                     },
                 },
             });
 
-            // Pin folder button
             const pinFolderButton = createElement('button', {
                 properties: { textContent: pinned ? '◉' : '◎' },
                 attributes: { title: pinned ? 'Pinned' : 'UnPinned Folder' },
@@ -915,8 +909,6 @@
                     background: themeColors.backgroundColor,
                     color: themeColors.textColor,
                     border: 'none',
-                    borderLeft: `1px solid ${themeColors.borderColor}`,
-                    borderRadius: '0',
                     cursor: 'pointer',
                     fontSize: '16px',
                     fontWeight: 'bold',
@@ -924,53 +916,62 @@
                 },
                 events: {
                     mouseover: () => {
-                        pinFolderButton.style.fontSize = '17px'; // Slightly increase size on hover
-                        pinFolderButton.style.color = '#00aaff'; // Blue color on hover
+                        pinFolderButton.style.fontSize = '17px';
+                        pinFolderButton.style.color = '#00aaff';
                     },
                     mouseout: () => {
-                        pinFolderButton.style.fontSize = '16px'; // Reset size
-                        pinFolderButton.style.color = themeColors.textColor; // Reset color
+                        pinFolderButton.style.fontSize = '16px';
+                        pinFolderButton.style.color = themeColors.textColor;
                     },
-                    click: () => {
+                    click: (event) => {
+                        event.stopPropagation();
                         const folderIndex = foldersData.findIndex(
                             (f) => f.name === currentFolderName
                         );
                         if (folderIndex !== -1) {
-                            const isPinned = foldersData[folderIndex].pinned;
-                            foldersData[folderIndex].pinned = !isPinned;
-                            saveFoldersData(foldersData);
-                            // Re-render folders
-                            renderFolders();
+                            const folder = foldersData[folderIndex];
+                            // NOTE: Folder should NOT expand on pin toggle:
+                            // we do NOT set folderExpansionState here.
+                            if (!folder.pinned) {
+                                folder.pinned = true;
+                                folder.pinnedAt = Date.now();
+                            } else {
+                                folder.pinned = false;
+                                folder.pinnedAt = null;
+                            }
+                            saveData({ foldersData, bookmarkChats });
+                            // Re-render without forcing expansion
+                            renderItems();
                         }
                     },
                 },
             });
 
-            // Delete folder button
             const deleteButton = createElement('button', {
                 properties: { textContent: '×' },
+                attributes: { title: 'delete folder' },
                 styles: {
                     padding: '10px',
                     background: themeColors.backgroundColor,
                     color: themeColors.textColor,
                     border: 'none',
-                    borderLeft: `1px solid ${themeColors.borderColor}`,
-                    borderRadius: '0 7px 7px 0', // Added to create rounded corners
                     cursor: 'pointer',
                     fontSize: '16px',
                     fontWeight: 'bold',
                     transition: 'color 0.2s, font-size 0.2s',
+                    borderRadius: '0 7px 7px 0',
                 },
                 events: {
                     mouseover: () => {
                         deleteButton.style.color = themeColors.deleteButtonHoverColor;
-                        deleteButton.style.fontSize = '17px'; // Slightly increase size on hover
+                        deleteButton.style.fontSize = '17px';
                     },
                     mouseout: () => {
                         deleteButton.style.color = themeColors.textColor;
-                        deleteButton.style.fontSize = '16px'; // Reset size
+                        deleteButton.style.fontSize = '16px';
                     },
-                    click: () => {
+                    click: (event) => {
+                        event.stopPropagation();
                         if (
                             confirm(`Are you sure you want to delete the folder "${currentFolderName}"?`)
                         ) {
@@ -978,37 +979,33 @@
                                 (folder) => folder.name === currentFolderName
                             );
                             if (folderIndex !== -1) {
+                                delete folderExpansionState[currentFolderName];
                                 foldersData.splice(folderIndex, 1);
-                                saveFoldersData(foldersData);
-                                // Re-render folders
-                                renderFolders();
+                                saveData({ foldersData, bookmarkChats });
+                                renderItems();
                             }
                         }
                     },
                 },
             });
 
-            // Folder content container
             const folderContent = createElement('div', {
                 styles: {
-                    display: 'none',
                     padding: '10px',
                     background: themeColors.folderContentBackground,
                     border: `1px solid ${themeColors.borderColor}`,
-                    borderRadius: '7px', // Added to create rounded corners
+                    borderRadius: '7px',
                 },
             });
 
-            // Load existing chats
             renderChatsInFolder(folderContent, folderChats, currentFolderName);
 
-            // Set initial folder icon based on content display
-            folderIconSpan.textContent =
-                folderContent.style.display === 'none' ? '📁' : '📂';
+            const isExpanded = folderExpansionState[currentFolderName] || false;
+            folderContent.style.display = isExpanded ? 'block' : 'none';
+            folderIconSpan.textContent = isExpanded ? '📂' : '📁';
 
-            // Assemble folder header
             const buttonContainer = createElement('div', {
-                styles: { display: 'flex', borderRadius: '7px' }, // Added to create rounded corners
+                styles: { display: 'flex', borderRadius: '7px' },
             });
 
             buttonContainer.appendChild(addChatButton);
@@ -1018,41 +1015,65 @@
             headerContainer.appendChild(folderButton);
             headerContainer.appendChild(buttonContainer);
 
-            // Assemble folder
             folderContainer.appendChild(headerContainer);
             folderContainer.appendChild(folderContent);
 
-            // Add folder to container
-            foldersContainer.appendChild(folderContainer);
-        };
+            itemsContainer.appendChild(folderContainer);
+        }
 
-        // Initial render of folders
-        renderFolders();
+        function renderItems() {
+            itemsContainer.innerHTML = '';
 
-        // Insert "My Folders" into the DOM
-        exploreGPTs.parentElement.insertAdjacentElement('afterend', myFoldersHeader);
-        myFoldersHeader.insertAdjacentElement('afterend', foldersContainer);
+            // folders first
+            const sortedFolders = foldersData.slice().sort(sortItems);
+            sortedFolders.forEach((folder) => {
+                createFolder(folder.name, folder.chats, folder.pinned);
+            });
 
-        // Observe changes to document.title to auto-update chat names
+            const sortedBookmarkChats = bookmarkChats.slice().sort(sortItems);
+
+            if (sortedBookmarkChats.length > 0) {
+                // Add a "Bookmarks 📎" section before showing chats
+                const bookmarkHeader = document.createElement('div');
+                bookmarkHeader.textContent = "\u00A0\u00A0📎\u00A0\u00A0Bookmarks";
+                // bookmarkHeader.style.fontWeight = 'bold';
+                bookmarkHeader.style.marginTop = '10px';
+                bookmarkHeader.style.marginBottom = '5px';
+                itemsContainer.appendChild(bookmarkHeader);
+            }
+
+            // then bookmarkChats
+            sortedBookmarkChats.forEach((chat) => {
+                const chatItem = createChatItem(chat, null, true);
+                itemsContainer.appendChild(chatItem);
+            });
+        }
+
+        renderItems();
+
+        exploreGPTs.parentElement.insertAdjacentElement('afterend', mainHeader);
+        mainHeader.insertAdjacentElement('afterend', itemsContainer);
+
         const titleElement = document.querySelector('title');
         const titleObserver = new MutationObserver((mutations) => {
             mutations.forEach((mutation) => {
                 const newTitle = mutation.target.textContent;
-                // Update chat name if it exists in folders
                 updateChatNameIfExists(window.location.href, newTitle);
             });
         });
         titleObserver.observe(titleElement, { childList: true });
 
-        /**
-         * Update chat name in foldersData if it exists.
-         * @param {string} href - The chat URL.
-         * @param {string} newName - The new chat name.
-         */
-        const updateChatNameIfExists = (href, newName) => {
+        function updateChatNameIfExists(href, newName) {
             let updated = false;
+            bookmarkChats.forEach((chat) => {
+                if (chat.href === href && chat.name !== newName) {
+                    chat.name = newName;
+                    updated = true;
+                }
+            });
+
             foldersData.forEach((folder) => {
-                const chatIndex = folder.chats.findIndex((chat) => chat.href === href);
+                const chatIndex = folder.chats.findIndex((c) => c.href === href);
                 if (chatIndex !== -1) {
                     if (folder.chats[chatIndex].name !== newName) {
                         folder.chats[chatIndex].name = newName;
@@ -1060,14 +1081,14 @@
                     }
                 }
             });
-            if (updated) {
-                saveFoldersData(foldersData);
-                renderFolders();
-            }
-        };
-    };
 
-    // Observe the DOM for changes to ensure the "Explore GPTs" button is loaded
+            if (updated) {
+                saveData({ foldersData, bookmarkChats });
+                renderItems();
+            }
+        }
+    }
+
     const observer = new MutationObserver((mutationsList, observer) => {
         for (const mutation of mutationsList) {
             if (mutation.type === 'childList') {
